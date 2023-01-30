@@ -71,6 +71,8 @@ pub struct System {
     sound: u8,
     display: [[bool; 64]; 32],
     buttons: [bool; 16],
+    waiting_for_key: bool,
+    insert_key_at: u8,
 }
 
 impl System {
@@ -91,6 +93,8 @@ impl System {
             sound: 0,
             display: [[false; 64]; 32],
             buttons: [false; 16],
+            waiting_for_key: false,
+            insert_key_at: 0,
         }
     }
 
@@ -108,13 +112,45 @@ impl System {
         )
         .unwrap();
 
+        self.buttons = [false; 16];
+
+        window.limit_update_rate(Some(std::time::Duration::from_millis(1000 / 500)));
+
         while window.is_open() && !window.is_key_down(Key::Escape) {
-            self.buttons = [false; 16];
+            if self.waiting_for_key {
+                let keys: Vec<usize> = window
+                    .get_keys_pressed(minifb::KeyRepeat::Yes)
+                    .iter()
+                    .filter_map(|k| key_to_index(*k))
+                    .collect();
+
+                if !keys.is_empty() {
+                    self.reg[self.insert_key_at as usize] = keys[0] as u8;
+                    self.waiting_for_key = false;
+                }
+
+                break;
+            }
+
+            if self.delay != 0 {
+                self.delay -= 1;
+            }
+
+            if self.sound != 0 {
+                self.sound -= 1;
+            }
+
             window
                 .get_keys_pressed(minifb::KeyRepeat::Yes)
                 .iter()
                 .filter_map(|k| key_to_index(*k))
                 .for_each(|k| self.buttons[k] = true);
+
+            window
+                .get_keys_released()
+                .iter()
+                .filter_map(|k| key_to_index(*k))
+                .for_each(|k| self.buttons[k] = false);
 
             self.tick();
 
@@ -276,11 +312,11 @@ impl System {
 
                         let write = (self.mem[self.i as usize + y as usize] >> (7 - x)) & 1;
 
-                        if self.display[display_y][display_x] && write == 1 {
+                        if self.display[display_y % 32][display_x % 64] && write == 1 {
                             self.reg[0xF] = 1;
                         }
 
-                        self.display[display_y][display_x] ^= write != 0;
+                        self.display[display_y % 32][display_x % 64] ^= write != 0;
                     }
                 }
             }
@@ -305,7 +341,8 @@ impl System {
                 0x07 => self.reg[x as usize] = self.delay,
 
                 0x0A => {
-                    unimplemented!()
+                    self.waiting_for_key = true;
+                    self.insert_key_at = x;
                 }
 
                 0x15 => self.delay = vx,
